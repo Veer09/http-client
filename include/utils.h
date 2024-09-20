@@ -34,6 +34,19 @@ typedef struct {
     char* body;
 }Request;
 
+typedef struct {
+    char* version;
+    int status_code;
+    char* status_text;
+    HeaderList* headers;
+    char* body;
+}Response;
+
+typedef struct {
+    Request* request;
+    Response* response;
+    bool is_verbose;
+}Global;
 
 typedef enum {
     SUCCESS = 0,                        
@@ -49,24 +62,26 @@ typedef enum {
     ERR_INVALID_ARGS              
 }ReturnCode;
 
-ReturnCode init_request(Request** req);
+ReturnCode init_request(Global* global);
 
-ReturnCode parse_args(int argc, char* argv[], Request* req);
+ReturnCode parse_args(int argc, char* argv[], Global* global);
 
-ReturnCode parse_url(const char *url, Request* request);
+ReturnCode parse_url(const char *url, Global* global);
 
-ReturnCode add_header(char* key, char* value, Request* request);
+ReturnCode add_header(char* key, char* value, Global* global, bool is_request);
 
-ReturnCode add_default_headers(Request* request);
+ReturnCode add_default_headers(Global* global);
 
-ReturnCode get_args(char* flag, char* value, Request* request);
+ReturnCode get_args(char* flag, char* value, Global* global);
 
+ReturnCode parse_response(char* response, Global* global);
 
 void free_url(Url* url);
-
 
 char* request_to_string(const Request* req);
 
 void handle_error(ReturnCode code);
+
+ReturnCode init_response(Global* global);
 
 #endif
