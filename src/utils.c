@@ -522,9 +522,11 @@ ReturnCode init_response(Global* global){
     return SUCCESS;
 }
 
-ReturnCode parse_response(char *response, Global *global)
-{
-    char* version = strtok(response, " ");
+
+ReturnCode parse_status_header(char* status_and_header, Global* global){
+
+    //Getting http version
+    char* version = strtok(status_and_header, " ");
     if(version == NULL){
         return ERR_INVALID_RESPONSE;
     }
@@ -533,6 +535,8 @@ ReturnCode parse_response(char *response, Global *global)
         return ERR_MEMORY_ALLOCATION;
     }
     strcpy(global->response->version, version);
+
+    //Getting status code and status text
     char* status_code = strtok(NULL, " ");
     if(status_code == NULL){
         return ERR_INVALID_RESPONSE;
@@ -547,18 +551,9 @@ ReturnCode parse_response(char *response, Global *global)
         return ERR_MEMORY_ALLOCATION;
     }
     strcpy(global->response->status_text, status_text);
-    response += strlen(version) + strlen(status_code) + strlen(status_text) + 3 ;
-    char* header_end = strstr(response, "\r\n\r\n");
-    if(header_end == NULL){
-        return ERR_INVALID_RESPONSE;
-    }
-    char* body = header_end + 4;
-    global->response->body = (char*)malloc(strlen(body) + 1);
-    if(global->response->body == NULL){
-        return ERR_MEMORY_ALLOCATION;
-    }
-    strcpy(global->response->body, body);
-    char* header = strtok(response, "\r\n");
+
+    //Getting headers
+    char* header = strtok(NULL, "\r\n");
     while(header != NULL){
         char* colon = strchr(header, ':');
         if(colon == NULL){
@@ -573,6 +568,13 @@ ReturnCode parse_response(char *response, Global *global)
         char* value = colon;
         if(key == NULL || value == NULL){
             return ERR_INVALID_RESPONSE;
+        }
+        if(strcmp(key, "Transfer-Encoding") == 0){
+            if(strcmp(value, "chunked") == 0){
+                global->response->is_chunked = true;
+            }
+        }else if(strcmp(key, "Content-Length") == 0){
+            global->response->content_length = atoi(value);
         }
         ReturnCode res = add_header(key, value, global, false);
         if(res){

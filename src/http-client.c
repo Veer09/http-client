@@ -57,6 +57,13 @@ ReturnCode send_request(struct addrinfo *addr, const char *request, Global *glob
         close(socket_fd);
         return ERR_SYSTEM_ERROR;
     }
+    char *res = (char *)malloc(BUFSIZ);
+
+    if (res == NULL)
+    {
+        close(socket_fd);
+        return ERR_MEMORY_ALLOCATION;
+    }
 
     if ((send(socket_fd, request, strlen(request), 0)) == -1)
     {
@@ -78,48 +85,144 @@ ReturnCode send_request(struct addrinfo *addr, const char *request, Global *glob
         printf("\r\n");
     }
 
-    char *response = (char *)malloc(BUFSIZ);
+    char *status_and_header = (char *)malloc(BUFSIZ);
     char buff[BUFSIZ];
-    int recv_len;
-    int total_len = 0;
+    int recv_len = 0, total_len = 0;
+    char *header_end;
+
     while ((recv_len = recv(socket_fd, buff, BUFSIZ - 1, 0)) > 0)
     {
         buff[recv_len] = '\0';
-        if (total_len + recv_len >= strlen(response))
+        if (total_len + recv_len > strlen(status_and_header))
         {
-            response = (char *)realloc(response, total_len + recv_len + 1);
-            if (response == NULL)
+            status_and_header = (char *)realloc(status_and_header, total_len + recv_len + 1);
+            if (status_and_header == NULL)
             {
                 close(socket_fd);
                 return ERR_MEMORY_ALLOCATION;
             }
         }
-        memcpy(response + total_len, buff, recv_len);
+        memcpy(status_and_header + total_len, buff, recv_len + 1);
         total_len += recv_len;
+        if ((header_end = strstr(status_and_header, "\r\n\r\n")) != NULL)
+        {
+            break;
+        }
     }
 
-    if (recv_len < 0)
+    if (recv_len == -1)
     {
         perror("Can't receive response!!");
+        close(socket_fd);
         return ERR_SYSTEM_ERROR;
     }
-    close(socket_fd);
 
-    response = (char *)realloc(response, strlen(response) + 1);
-    if (response == NULL)
+    if (header_end == NULL)
     {
+        return ERR_INVALID_RESPONSE;
+    }
+
+    *header_end = '\0';
+
+    char *body_part = (char *)malloc(strlen(header_end+4));
+    if (body_part == NULL)
+    {
+        close(socket_fd);
         return ERR_MEMORY_ALLOCATION;
     }
+    strcpy(body_part, header_end + 4);
+
     init_response(global);
-    parse_response(response, global);
-    printf("%d %s\n", global->response->status_code, global->response->status_text);
-    Header *header = global->response->headers->head;
-    for (int i = 0; i < global->response->headers->size; i++)
+    parse_status_header(status_and_header, global);
+
+    if (global->response->content_length > 0)
     {
-        printf("< %s:%s\r\n", header->key, header->value);
-        header = header->next;
+        int remaining = global->response->content_length - strlen(body_part);
+        total_len = strlen(body_part);
+        while (remaining > 0)
+        {
+            recv_len = recv(socket_fd, buff, BUFSIZ - 1, 0);
+            if (recv_len == -1)
+            {
+                perror("Can't receive response!!");
+                close(socket_fd);
+                return ERR_SYSTEM_ERROR;
+            }
+            buff[recv_len] = '\0';
+            if (total_len + recv_len > strlen(body_part))
+            {
+                body_part = (char *)realloc(body_part, total_len + recv_len + 1);
+                if (body_part == NULL)
+                {
+                    close(socket_fd);
+                    return ERR_MEMORY_ALLOCATION;
+                }
+            }
+            memcpy(body_part + total_len, buff, recv_len + 1);
+            total_len += recv_len;
+            remaining -= recv_len;
+
+            char *end = strstr(body_part, "\r\n\r\n");
+            if (end != NULL)
+            {
+                end += 4;
+                *end = '\0';
+                break;
+            }
+        }
+
+        if(remaining < 0){
+            body_part[global->response->content_length] = '\0';
+            printf("Warning: Content-Length is greater than actual content length provided in header\n");
+        }
     }
-    printf("\r\n");
-    printf("%s\n", global->response->body);
+    else
+    {
+        char *end = strstr(body_part, "\r\n\r\n");
+        if (end != NULL)
+        {
+            end += 4;
+            *end = '\0';
+        }
+        else
+        {
+            total_len = strlen(body_part);
+            while ((recv_len = recv(socket_fd, buff, BUFSIZ - 1, 0)) > 0)
+            {
+                buff[recv_len] = '\0';
+                if (total_len + recv_len > strlen(body_part))
+                {
+                    body_part = (char *)realloc(body_part, total_len + recv_len + 1);
+                    if (body_part == NULL)
+                    {
+                        close(socket_fd);
+                        return ERR_MEMORY_ALLOCATION;
+                    }
+                }
+                memcpy(body_part + total_len, buff, recv_len + 1);
+                total_len += recv_len;
+
+                if ((end = strstr(body_part, "\r\n\r\n")) != NULL)
+                {
+                    end += 4;
+                    *end = '\0';
+                    break;
+                }
+            }
+        }
+    }
+    global->response->body = body_part;
+    if(global->is_verbose){
+        printf("< %s %d %s\r\n", global->response->version, global->response->status_code, global->response->status_text);
+        Header *header = global->response->headers->head;
+        for (int i = 0; i < global->response->headers->size; i++)
+        {
+            printf("< %s:%s\r\n", header->key, header->value);
+            header = header->next;
+        }
+        printf("\r\n");
+    }
+
+    printf("%s", global->response->body);
     return SUCCESS;
 }

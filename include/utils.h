@@ -40,6 +40,8 @@ typedef struct {
     char* status_text;
     HeaderList* headers;
     char* body;
+    bool is_chunked;
+    size_t content_length;
 }Response;
 
 typedef struct {
@@ -83,5 +85,7 @@ char* request_to_string(const Request* req);
 void handle_error(ReturnCode code);
 
 ReturnCode init_response(Global* global);
+
+ReturnCode parse_status_header(char* status_and_header, Global* global);
 
 #endif
