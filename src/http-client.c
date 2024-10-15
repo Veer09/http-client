@@ -28,6 +28,7 @@ ReturnCode get_addr_info(const Url *url, struct addrinfo **addr)
         return ERR_SYSTEM_ERROR;
     }
     *addr = res;
+    printf("IP address %s\n", inet_ntoa(((struct sockaddr_in *)(res->ai_addr))->sin_addr));
     return SUCCESS;
 }
 
@@ -124,7 +125,7 @@ ReturnCode send_request(struct addrinfo *addr, const char *request, Global *glob
 
     *header_end = '\0';
 
-    char *body_part = (char *)malloc(strlen(header_end+4));
+    char *body_part = (char *)malloc(strlen(header_end + 4));
     if (body_part == NULL)
     {
         close(socket_fd);
@@ -171,10 +172,68 @@ ReturnCode send_request(struct addrinfo *addr, const char *request, Global *glob
             }
         }
 
-        if(remaining < 0){
+        if (remaining < 0)
+        {
             body_part[global->response->content_length] = '\0';
             printf("Warning: Content-Length is greater than actual content length provided in header\n");
         }
+    }
+    else if (global->response->is_chunked)
+    {
+        total_len = strlen(body_part);
+        while ((recv_len = recv(socket_fd, buff, BUFSIZ - 1, 0)) > 0)
+        {
+            buff[recv_len] = '\0';
+            if (total_len + recv_len > strlen(body_part))
+            {
+                body_part = (char *)realloc(body_part, total_len + recv_len + 1);
+                if (body_part == NULL)
+                {
+                    close(socket_fd);
+                    return ERR_MEMORY_ALLOCATION;
+                }
+            }
+            memcpy(body_part + total_len, buff, recv_len + 1);
+            total_len += recv_len;
+        }
+        char *response = (char *)malloc(1);
+        response[0] = '\0';
+        char *chunk_size_str_end = strstr(body_part, "\r\n");
+        char *chunk_size_str = malloc(chunk_size_str_end - body_part + 1);
+        if (chunk_size_str == NULL)
+        {
+            close(socket_fd);
+            return ERR_MEMORY_ALLOCATION;
+        }
+        memcpy(chunk_size_str, body_part, chunk_size_str_end - body_part);
+        chunk_size_str[chunk_size_str_end - body_part] = '\0';
+        while (chunk_size_str != NULL)
+        {
+            int chunk_size = strtol(chunk_size_str, NULL, 16);
+            if (chunk_size == 0)
+            {
+                break;
+            }
+            response = (char *)realloc(response, strlen(response) + chunk_size + 1);
+            if (response == NULL)
+            {
+                close(socket_fd);
+                return ERR_MEMORY_ALLOCATION;
+            }
+            memcpy(response + strlen(response), chunk_size_str_end + 2, chunk_size);
+            body_part = chunk_size_str_end + 2 +  chunk_size + 2;
+            response[strlen(response) + chunk_size] = '\0';
+            chunk_size_str_end = strstr(body_part, "\r\n");
+            chunk_size_str = malloc(chunk_size_str_end - body_part + 1);
+            if (chunk_size_str == NULL)
+            {
+                close(socket_fd);
+                return ERR_MEMORY_ALLOCATION;
+            }
+            memcpy(chunk_size_str, body_part, chunk_size_str_end - body_part);
+            chunk_size_str[chunk_size_str_end - body_part] = '\0';
+        }
+        global->response->body = response;
     }
     else
     {
@@ -210,9 +269,11 @@ ReturnCode send_request(struct addrinfo *addr, const char *request, Global *glob
                 }
             }
         }
+        global->response->body = body_part;
     }
-    global->response->body = body_part;
-    if(global->is_verbose){
+
+    if (global->is_verbose)
+    {
         printf("< %s %d %s\r\n", global->response->version, global->response->status_code, global->response->status_text);
         Header *header = global->response->headers->head;
         for (int i = 0; i < global->response->headers->size; i++)
