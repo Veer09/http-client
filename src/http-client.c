@@ -177,6 +177,7 @@ ReturnCode send_request(struct addrinfo *addr, const char *request, Global *glob
             body_part[global->response->content_length] = '\0';
             printf("Warning: Content-Length is greater than actual content length provided in header\n");
         }
+        global->response->body = body_part;
     }
     else if (global->response->is_chunked)
     {
